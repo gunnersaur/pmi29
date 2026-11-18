@@ -1,125 +1,96 @@
-)
-        for chave in nomes
-    ):
-        st.success("Os sócios identificados coincidem entre os documentos que apresentam quadro societário.")
-    else:
-        st.warning(
-            "Há sócios identificados em apenas parte dos documentos com quadro societário. "
-            "Verifique os dados e as seções extraídas."
-        )
+import pandas as pd
+import numpy as np
+import streamlit as st
+import pydeck as pdk
+import re
+from itertools import chain
 
-# INTERFACE UNIFICADA — QUATRO DOCUMENTOS
-# ============================================================
+#Configurações do Streamlit
 
-st.title("🔎 Verifica preenchimento — comparação de documentos")
-st.write("Cole os documentos que deseja comparar. É possível analisar a partir de dois documentos; os campos vazios serão ignorados.")
+st.set_page_config(page_title='Viabilidade ALF Itajaí', 
+                   layout="centered", 
+                   initial_sidebar_state='expanded',
+                   page_icon=('./images/favicon.png'), 
+                   menu_items=None
+                   )
 
-if "texto_aprova" not in st.session_state:
-    st.session_state["texto_aprova"] = ""
-if "texto_cnpj" not in st.session_state:
-    st.session_state["texto_cnpj"] = ""
-if "texto_cadastro" not in st.session_state:
-    st.session_state["texto_cadastro"] = ""
-if "texto_legalizacao" not in st.session_state:
-    st.session_state["texto_legalizacao"] = ""
+logo_image = ('./images/logo.png')
+
+#Sidebar
+st.sidebar.image(logo_image, width=150)
+st.sidebar.divider()
+st.sidebar.page_link("app.py", label="01_Consulta de Viabilidade (inscr.)")
+st.sidebar.page_link("pages/cv_zona.py", label="__Consulta de Viabilidade (zona)")
+st.sidebar.page_link("pages/verifica_aprova.py", label="02_Verifica processo ALF")
+st.sidebar.page_link("pages/links.py", label="03_Links úteis")
+st.sidebar.page_link("pages/documentacao-complementar-ALF.py", label="04_Doc. complementar ALF")
+st.sidebar.page_link("pages/estudo-de-impacto-de-vizinhanca.py", label="05_EIV")
+
+
+#Tabelas CSV
+
+df_permissao=pd.read_csv("dados/permissao.csv", nrows=2000)
+df_risco_uso=pd.read_csv("dados/risco_uso.csv", nrows=2000)
+df_zona_col=pd.read_csv("dados/zona_col.csv", nrows=100)
+df_inscricao=pd.read_csv("dados/inscricao.csv")
+
+#Página principal do Streamlit - fixa
+st.subheader('Consulta de Viabilidade - Alvará de Funcionamento - Itajaí')
 
 col1, col2 = st.columns(2)
+
 with col1:
-    st.subheader("📄 Documento 1 — Aprova Digital")
-    st.text_area("Texto do Aprova Digital", height=300, key="texto_aprova", placeholder="Cole aqui o texto completo do Aprova Digital...")
+    ib_zon = st.text_input(
+    "Inscrição Imobiliária (Padrão 000.000.00.0000)",
+    key="ib_iscricao"
+    )
+
 with col2:
-    st.subheader("📄 Documento 2 — CNPJ")
-    st.text_area("Texto do CNPJ", height=300, key="texto_cnpj", placeholder="Cole aqui o texto completo da consulta do CNPJ...")
+    ib_area = st.number_input(
+    "Área ocupada (m²)",
+    key="ib_area"
+    )
 
-col3, col4 = st.columns(2)
-with col3:
-    st.subheader("📄 Documento 3 — Cadastro Municipal")
-    st.text_area("Texto do Cadastro Municipal", height=300, key="texto_cadastro", placeholder="Cole aqui o texto completo do Cadastro Municipal...")
-with col4:
-    st.subheader("📄 Documento 4 — Legalização")
-    st.text_area("Texto da Legalização", height=300, key="texto_legalizacao", placeholder="Cole aqui o texto completo da Legalização...")
+ib_cnpj = st.text_input(
+    "Cole todo o texto do CNPJ - O programa irá selecionar as atividades de forma automática ",
+    key="ib_cnpj"
+    )
 
-def limpar_todos_campos():
-    for chave in ("texto_aprova", "texto_cnpj", "texto_cadastro", "texto_legalizacao"):
-        st.session_state[chave] = ""
+def clear_text():
+    st.session_state["ib_cnpj"] = ""
+    st.session_state["ib_area"] = 0
+    st.session_state["ib_iscricao"] = ""
+st.button("Limpar", on_click=clear_text)
 
-b1, b2, _ = st.columns([1, 1, 4])
-with b1:
-    analisar = st.button("🔎 Comparar documentos preenchidos", type="primary", use_container_width=True)
-with b2:
-    st.button("🧹 Limpar", on_click=limpar_todos_campos, use_container_width=True)
+st.divider()    
 
-if analisar:
-    textos = {
-        "Aprova Digital": st.session_state["texto_aprova"],
-        "CNPJ": st.session_state["texto_cnpj"],
-        "Cadastro Municipal": st.session_state["texto_cadastro"],
-        "Legalização": st.session_state["texto_legalizacao"],
-    }
-    textos_preenchidos = {nome: texto for nome, texto in textos.items() if texto.strip()}
-    if len(textos_preenchidos) < 2:
-        st.warning("Informe pelo menos dois documentos para realizar a comparação.")
-    else:
-        extratores = {
-            "Aprova Digital": extrair_aprova_completo,
-            "CNPJ": extrair_cnpj_documento,
-            "Cadastro Municipal": extrair_cadastro_municipal,
-            "Legalização": extrair_legalizacao,
-        }
-        dados_docs = {
-            nome: extratores[nome](texto)
-            for nome, texto in textos_preenchidos.items()
-        }
-        st.info(f"Análise realizada com {len(dados_docs)} documentos: " + ", ".join(dados_docs.keys()) + ".")
-        st.divider()
-        st.header("📋 Resumo dos dados identificados")
-        cols = st.columns(len(dados_docs))
-        for col, (nome, dados) in zip(cols, dados_docs.items()):
-            with col:
-                st.markdown(f"**{nome}**")
-                st.write("CNPJ:", dados.get("cnpj") or "Não identificado")
-                st.write("Razão social:", dados.get("razao_social") or "Não identificada")
-                st.write("CNAEs identificados:", len(dados.get("cnaes", [])))
-                if nome == "CNPJ":
-                    st.write("Quadro societário: não consta no comprovante padrão")
-                else:
-                    st.write("Sócios identificados:", len(dados.get("socios", [])))
-        st.divider()
-        st.header("🔍 Comparação geral dos campos")
-        mostrar_comparacao_quatro_documentos(dados_docs)
-        st.divider()
-        mostrar_cnaes_quatro(dados_docs)
-        st.divider()
-        mostrar_socios_quatro(dados_docs)
-        st.divider()
-        st.header("📊 Resultado geral")
-        # Contagem baseada nos valores extraídos, sem declarar conformidade quando nada foi extraído.
-        campos_chave = ("cnpj", "razao_social", "logradouro", "numero", "bairro", "cep")
-        divergencias = []
-        pendencias = []
-        normalizadores_campos = {
-            "cnpj": normalizar_cnpj_local,
-            "razao_social": normalizar_razao_social,
-            "logradouro": normalizar_logradouro,
-            "numero": normalizar_numero,
-            "bairro": normalizar_simples,
-            "cep": normalizar_cep,
-        }
-        for campo in campos_chave:
-            normalizador = normalizadores_campos.get(campo, normalizar_simples)
-            valores = [normalizador(d.get(campo, "")) for d in dados_docs.values()]
-            preenchidos = [v for v in valores if v]
-            if len(set(preenchidos)) > 1:
-                divergencias.append(campo.replace("_", " ").title())
-            if len(preenchidos) < len(valores):
-                pendencias.append(campo.replace("_", " ").title())
-        if divergencias:
-            st.error("Foram encontradas divergências nos campos: " + ", ".join(divergencias) + ".")
-        elif pendencias:
-            st.warning("Não foram detectadas divergências entre os valores extraídos, mas há campos não identificados em alguma fonte: " + ", ".join(pendencias) + ".")
-        else:
-            st.success(f"Os campos principais extraídos coincidem entre os {len(dados_docs)} documentos informados. Confira também CNAEs, sócios e a tabela completa.")
-        with st.expander("🛠️ Conferência técnica da extração"):
-            for nome, dados in dados_docs.items():
-                st.markdown(f"**{nome}**")
-                st.json(dados)
+try:
+    if ib_cnpj and ib_area and ib_zon != "":
+        
+        #Lista os cnaes do CNPJ
+        cnaes_cnpj = re.findall(r'\d\d.\d\d-\d-\d\d', ib_cnpj)
+        cnae_principal_cnpj=cnaes_cnpj[0]
+        numero_cnpj = re.findall(r'\d\d.\d\d\d.\d\d\d/\d\d\d\d-\d\d', ib_cnpj)
+        texto_cnpj_split = re.sub(' +', ' ',ib_cnpj).split(' ')
+
+
+        #Filtra a coluna de risco em função da área
+        if ib_area <= 150:
+            id_risco='ate150.'
+        if ib_area > 150 and ib_area <= 500:
+            id_risco='150a500.'
+        if ib_area > 500 and ib_area <= 750:
+            id_risco='500a750.'
+        if ib_area > 750:
+            id_risco='acima750.'
+        
+        #Filta a coluna de uso em função da área
+        if ib_area <= 150:
+            id_uso='ate150'
+        if ib_area > 150 and ib_area <= 200:
+            id_uso='150a200'
+        if ib_area > 200 and ib_area <= 500:
+            id_uso='200a500'
+        if ib_area > 500 and ib_area <= 750:
+            id_uso='500a750'
+        if ib_area > 750 and ib_area <= 1000:
